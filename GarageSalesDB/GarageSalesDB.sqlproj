@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build">
+  <Sdk Name="Microsoft.Build.Sql" Version="2.2.0" />
+  <PropertyGroup>
+    <Name>GarageSalesDB</Name>
+    <DSP>Microsoft.Data.Tools.Schema.Sql.Sql150DatabaseSchemaProvider</DSP>
+    <ModelCollation>1033, CI</ModelCollation>
+    <ProjectGuid>463CDA38-8FF4-4B7D-8451-A726A91C42A3</ProjectGuid>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Stops all .sql scripts in the Scripts folder from running during publish -->
+    <Build Remove="Scripts/**/*.sql" />
+    <None Include="Scripts/**/*.sql" />
+  </ItemGroup>
+</Project>

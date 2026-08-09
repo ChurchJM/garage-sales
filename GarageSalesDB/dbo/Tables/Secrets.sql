@@ -1,0 +1,7 @@
+CREATE TABLE [dbo].[Secrets]
+(
+  [Id] INT NOT NULL IDENTITY(1,1),
+  [Key] NVARCHAR(MAX) NOT NULL,
+  [Value] NVARCHAR(MAX) NOT NULL,
+  CONSTRAINT PK_Secrets PRIMARY KEY ([Id])
+)

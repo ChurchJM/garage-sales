@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="Current" xmlns="http://microsoft.com">
+  <PropertyGroup>
+    <DropObjectsNotInSource>False</DropObjectsNotInSource>
+    <DoNotExecuteDeployScripts>True</DoNotExecuteDeployScripts>
+  </PropertyGroup>
+</Project>

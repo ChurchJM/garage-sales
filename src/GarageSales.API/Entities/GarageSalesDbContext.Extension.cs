@@ -26,5 +26,9 @@ public partial class GarageSalesDbContext : DbContext
         modelBuilder.Entity<User>()
             .Navigation(u => u.Address)
             .AutoInclude();
+
+        modelBuilder.Entity<FeaturedItem>()
+            .Navigation(fi => fi.Category)
+            .AutoInclude();
     }
 }

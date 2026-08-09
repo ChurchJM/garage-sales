@@ -1,0 +1,50 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "API",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/GarageSales.API/bin/Debug/net10.0/GarageSales.API.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/src/GarageSales.API",
+            "stopAtEntry": false,
+            "serverReadyAction": {
+                "action": "openUrl",
+                "pattern": "\\bNow listening on:\\s+(https?://\\S+)",
+                "uriFormat": "%s/swagger"
+            },
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            },
+            "sourceFileMap": {
+                "/Views": "${workspaceFolder}/src/GarageSales.API/Views"
+            }
+        },
+        {
+            "name": "Web",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/GarageSales.Web/bin/Debug/net10.0/GarageSales.Web.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/src/GarageSales.Web",
+            "stopAtEntry": false,
+            "serverReadyAction": {
+                "action": "openUrl",
+                "pattern": "\\bNow listening on:\\s+(https?://\\S+)"
+            },
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            }
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Both (API + Web)",
+            "configurations": [
+                "API",
+                "Web"
+            ]
+        }
+    ]
+}

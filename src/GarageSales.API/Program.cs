@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using GarageSalesAPI.Entities;
 using Microsoft.EntityFrameworkCore;
 using NetTopologySuite.Geometries;
+using Scalar.AspNetCore;
 using Point = NetTopologySuite.Geometries.Point;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -37,67 +38,137 @@ builder.Services.AddHttpClient<IGeocodingService, GeoapifyGeocodingService>(clie
 
 builder.Services.AddScoped<IEmailNotificationService, MailpitEmailNotificationService>();
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-// builder.Services.AddOpenApi();
+// Allow GarageSales.Web project to make JavaScript calls to API.
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowWebFrontend", policy =>
+    {
+        policy.WithOrigins(
+            "https://localhost:7120",
+            "http://localhost:5042"
+        ).AllowAnyHeader().AllowAnyMethod();
+    });
+});
+
+
+builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-// if (app.Environment.IsDevelopment())
-// {
-//     app.MapOpenApi();
-// }
+// Available at http://localhost:5166/scalar/v1
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+    app.MapScalarApiReference(options =>
+    {
+        options.WithTitle("Garage Sales API");
+    }); 
+}
 
 app.UseHttpsRedirection();
 
+#region GET Mappings
+
 app.MapGet("/", () => "I'm alive!");
 
-// Confirm the listing after user reviews the draft. Send appropriate email notifications.
-app.MapPost("/api/garagesales/{id:int}/confirm", async (int id, GarageSalesDbContext db, IEmailNotificationService emailSvc) =>
+app.MapGet("/api/garagesales", async ([AsParameters] GarageSaleQueryParamsDTO queryParams, GarageSalesDbContext db, IGeocodingService geo) =>
 {
-    var draftSale = await db.GarageSales.FirstOrDefaultAsync(gs => gs.Id == id);
-    if(draftSale is null)
-        return Results.BadRequest($"No garage sale exists with id {id}");
-    if(!draftSale.Draft)
-        return Results.BadRequest($"Garage sale with id {id} has already been confirmed.");
+    var query = db.GarageSales.AsNoTracking();
 
-    draftSale.Draft = false;
-    await db.SaveChangesAsync();
-
-    var saleLocation = await db.GarageSales.Where(gs => gs.Id == id)
-        .Select(gs => gs.Address.Location).FirstOrDefaultAsync();
-
-    // Address could not be geocoded during garage sale creation.
-    if(saleLocation is null)
-        return Results.Ok();
-
-    var saleDate = DateOnly.FromDateTime(draftSale.GarageSaleSchedules.Min(s => s.From));
-    var saleAddress = $"{draftSale.Address.Street}, {draftSale.Address.City}, {draftSale.Address.State}, {draftSale.Address.Zip}";
-
-    var notifications = await db.Notifications.MatchingSaleLocation(saleLocation)
-        .Select(n => new
-        {
-            Email = n.User.Email,
-            UserName = n.User.UserName,
-            SaleDistance = n.User.Address.Location.Distance(saleLocation) / SpatialQueryExtensions.MetersPerMile
-        }).Distinct().ToListAsync();
-
-    foreach(var notification in notifications)
+    if(!string.IsNullOrWhiteSpace(queryParams.Keyword))
     {
-        await emailSvc.SendGarageSaleNotificationAsync(
-            notification.Email,
-            notification.UserName,
-            saleAddress,
-            notification.SaleDistance,
-            saleDate);
+        query = query.Where(gs => !string.IsNullOrWhiteSpace(gs.Description) 
+        && gs.Description.Contains(queryParams.Keyword));
     }
 
-    return Results.Ok();
+    if(!string.IsNullOrWhiteSpace(queryParams.FeaturedItemCategory))
+    {
+        query = query.Where(gs => gs.FeaturedItems.Any(fi => fi.Category.Name == queryParams.FeaturedItemCategory));
+    }
+
+    // Query locates garage sales BEGINNING between AfterDate and BeforeDate.
+    if(queryParams.AfterDate.HasValue || queryParams.BeforeDate.HasValue)
+    {
+        var afterDate = queryParams.AfterDate?.Date;
+        var beforeDate = queryParams.BeforeDate?.Date.AddDays(1).AddTicks(-1); // E.g., 11:59:59 PM on equested BeforeDate
+
+        query = query.Where(gs => gs.GarageSaleSchedules.Any(s =>
+            (!afterDate.HasValue || s.From >= afterDate.Value) &&
+            (!beforeDate.HasValue || s.From <= beforeDate.Value)
+        ));
+    }
+
+    if(!string.IsNullOrWhiteSpace(queryParams.FromStreet) && !string.IsNullOrWhiteSpace(queryParams.FromZip)
+        && queryParams.RadiusMiles.HasValue)
+    {
+        var address = await db.Addresses.FirstOrDefaultAsync(a =>
+            a.Street.ToUpper() == queryParams.FromStreet.ToUpper()
+            && a.Zip == queryParams.FromZip);
+
+        Geometry pointOfOrigin = null;
+        if(address is not null && address.Location is not null)
+        {
+            pointOfOrigin = address.Location;
+        }
+        else
+        {
+            var geocoded = await geo.GeocodeAddressAsync(queryParams.FromStreet, queryParams.FromZip);
+            var feature = geocoded?.Features?.FirstOrDefault();
+            if (feature is not null)
+            {
+                var lat = feature.Properties.Lat;
+                var lon = feature.Properties.Lon;
+                pointOfOrigin = new Point(lon, lat) {SRID = 4326}; //SRID = 4326 indicates WGS 84 coordinate reference system (used by Geoapify).
+            }
+        }
+
+        if(pointOfOrigin is not null)
+            query = query.WithinRadiusOf(pointOfOrigin, queryParams.RadiusMiles.Value);
+    }
+
+    var matchingSales = await query
+        .Select(gs => new GarageSaleSummaryDTO(
+            gs.SaleType.Name,
+            gs.Address.Street,
+            gs.Address.Zip,
+            gs.Description,
+            gs.GarageSaleSchedules.Select(s => new GarageSaleScheduleDTO(s.From, s.To)).ToList(),
+            gs.FeaturedItems.Select(fi => new FeaturedItemDTO(fi.Category.Name, fi.Description)).ToList()
+        ))
+        .ToListAsync();
+    
+    return Results.Ok(matchingSales);
 });
 
+app.MapGet("/api/garagesales/{id:int}", async (int id, GarageSalesDbContext db) =>
+{
+    var existingSale = await db.GarageSales.AsNoTracking().FirstOrDefaultAsync(gs => gs.Id == id);
+    if(existingSale is null)
+        return Results.NotFound($"Garage sale with id {id} not found.");
+
+    var scheduleDTOs = existingSale.GarageSaleSchedules.Select(s => new GarageSaleScheduleDTO(s.From, s.To)).ToList();
+
+    var itemDTOs = existingSale.FeaturedItems.Select(fi => new FeaturedItemDTO(fi.Category.Name, fi.Description)).ToList();
+
+    var summaryDTO = new GarageSaleSummaryDTO
+    (
+        existingSale.SaleType.Name,
+        existingSale.Address.Street,
+        existingSale.Address.Zip,
+        existingSale.Description,
+        scheduleDTOs,
+        itemDTOs
+    );
+
+    return Results.Ok(summaryDTO);
+});
+
+#endregion
+
+#region POST Mappings
+
 // Garage sale creation endpoint.
-app.MapPost("/api/garagesales", async (GarageSaleCreateDTO dto, GarageSalesDbContext db, GeoapifyGeocodingService geo) =>
+app.MapPost("/api/garagesales", async (GarageSaleCreateDTO dto, GarageSalesDbContext db, IGeocodingService geo) =>
 {
     // Check 2 sale limit per resident per year.
     var userSalecount = await db.GarageSales.ThisYearByUserName(dto.Owner).CountAsync();
@@ -134,8 +205,8 @@ app.MapPost("/api/garagesales", async (GarageSaleCreateDTO dto, GarageSalesDbCon
 
     // Check if we've already stored and geocoded an address, saving an API call.
     var address = await db.Addresses.FirstOrDefaultAsync(a =>
-            string.Equals(a.Street, dto.Street, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(a.Zip, dto.Zip, StringComparison.OrdinalIgnoreCase));
+            a.Street.ToUpper() == dto.Street.ToUpper()
+            && a.Zip == dto.Zip);
 
     if(address is null)
     {
@@ -178,8 +249,96 @@ app.MapPost("/api/garagesales", async (GarageSaleCreateDTO dto, GarageSalesDbCon
     return Results.Created($"/api/garagesales/{garageSale.Id}", new { id = garageSale.Id });
 });
 
+// Confirm the listing after user reviews the draft. Send appropriate email notifications.
+app.MapPost("/api/garagesales/{id:int}/confirm", async (int id, GarageSalesDbContext db, IEmailNotificationService emailSvc) =>
+{
+    var draftSale = await db.GarageSales.FirstOrDefaultAsync(gs => gs.Id == id);
+    if(draftSale is null)
+        return Results.BadRequest($"No garage sale exists with id {id}");
+    if(!draftSale.Draft)
+        return Results.BadRequest($"Garage sale with id {id} has already been confirmed.");
+
+    draftSale.Draft = false;
+    await db.SaveChangesAsync();
+
+    var saleLocation = await db.GarageSales.Where(gs => gs.Id == id)
+        .Select(gs => gs.Address.Location).FirstOrDefaultAsync();
+
+    // Address could not be geocoded during garage sale creation.
+    if(saleLocation is null)
+        return Results.Ok();
+
+    var saleDate = DateOnly.FromDateTime(draftSale.GarageSaleSchedules.Min(s => s.From));
+    var saleAddress = $"{draftSale.Address.Street}, {draftSale.Address.City}, {draftSale.Address.State}, {draftSale.Address.Zip}";
+
+    var notifications = await db.Notifications.MatchingSaleLocation(saleLocation)
+        .Select(n => new
+        {
+            Email = n.User.Email,
+            UserName = n.User.UserName,
+            SaleDistance = n.User.Address.Location.Distance(saleLocation) / SpatialQueryExtensions.MetersPerMile
+        }).Distinct().ToListAsync();
+
+    // Todo: Check if Mailpit is running or add try/catch here.
+    foreach(var notification in notifications)
+    {
+        await emailSvc.SendGarageSaleNotificationAsync(
+            notification.Email,
+            notification.UserName,
+            saleAddress,
+            notification.SaleDistance,
+            saleDate);
+    }
+
+    return Results.Ok();
+});
+
+app.MapPost("/api/users", async (CreateUserDTO dto, GarageSalesDbContext db, IGeocodingService geo) =>
+{
+    var existingUser = await db.Users.FirstOrDefaultAsync(u => u.UserName == dto.UserName);
+    if(existingUser is not null)
+        return Results.Conflict($"User with user name {dto.UserName} already exists.");
+
+    var address = await db.Addresses.FirstOrDefaultAsync(a =>
+            a.Street.ToUpper() == dto.Street.ToUpper()
+            && a.Zip == dto.Zip);
+
+    if(address is null)
+    {
+        address = new(){Street=dto.Street, City="Palm Coast", State="FL", Zip=dto.Zip};
+        var geocoded = await geo.GeocodeAddressAsync(dto.Street, dto.Zip);
+        var feature = geocoded?.Features?.FirstOrDefault();
+        if (feature is not null)
+        {
+            var lat = feature.Properties.Lat;
+            var lon = feature.Properties.Lon;
+            address.Lat = lat;
+            address.Lon = lon;
+            address.Location = new Point(lon, lat) {SRID = 4326}; //SRID = 4326 indicates WGS 84 coordinate reference system (used by Geoapify).
+        }
+    }
+
+    var user = new User
+    {
+        UserName = dto.UserName,
+        Email = dto.Email,
+        Password = dto.Password,
+        Address = address,
+        IsAdmin = false
+    };
+
+    db.Users.Add(user);
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/api/users/{user.Id}", new { id = user.Id });
+});
+
+#endregion
+
+#region PUT Mappings
+
 // Update Garage Sale
-app.MapPut("/api/garagesales/{id:int}", async (int id, GarageSaleUpdateDTO dto, GarageSalesDbContext db, GeoapifyGeocodingService geo) =>
+app.MapPut("/api/garagesales/{id:int}", async (int id, GarageSaleUpdateDTO dto, GarageSalesDbContext db, IGeocodingService geo) =>
 {
     var existingSale = await db.GarageSales.FirstOrDefaultAsync(gs => gs.Id == id);
     if(existingSale is null)
@@ -263,6 +422,10 @@ app.MapPut("/api/garagesales/{id:int}", async (int id, GarageSaleUpdateDTO dto, 
     return Results.Ok();        
 });
 
+#endregion
+
+#region DELETE Mappings
+
 app.MapDelete("/api/garagesales/{id:int}", async (int id, GarageSalesDbContext db) =>
 {
     var existingSale = await db.GarageSales.FirstOrDefaultAsync(gs => gs.Id == id);
@@ -275,138 +438,6 @@ app.MapDelete("/api/garagesales/{id:int}", async (int id, GarageSalesDbContext d
     return Results.NoContent();
 });
 
-app.MapGet("/api/garagesales/{id:int}", async (int id, GarageSalesDbContext db) =>
-{
-    var existingSale = await db.GarageSales.AsNoTracking().FirstOrDefaultAsync(gs => gs.Id == id);
-    if(existingSale is null)
-        return Results.NotFound($"Garage sale with id {id} not found.");
-
-    var scheduleDTOs = existingSale.GarageSaleSchedules.Select(s => new GarageSaleScheduleDTO(s.From, s.To)).ToList();
-
-    var itemDTOs = existingSale.FeaturedItems.Select(fi => new FeaturedItemDTO(fi.Category.Name, fi.Description)).ToList();
-
-    var summaryDTO = new GarageSaleSummaryDTO
-    (
-        existingSale.SaleType.Name,
-        existingSale.Address.Street,
-        existingSale.Address.Zip,
-        existingSale.Description,
-        scheduleDTOs,
-        itemDTOs
-    );
-
-    return Results.Ok(summaryDTO);
-});
-
-app.MapGet("/api/garagesales", async ([AsParameters] GarageSaleQueryParamsDTO queryParams, GarageSalesDbContext db, IGeocodingService geo) =>
-{
-    var query = db.GarageSales.AsNoTracking();
-
-    if(!string.IsNullOrWhiteSpace(queryParams.Keyword))
-    {
-        query = query.Where(gs => !string.IsNullOrWhiteSpace(gs.Description) 
-        && gs.Description.Contains(queryParams.Keyword, StringComparison.OrdinalIgnoreCase));
-    }
-
-    if(!string.IsNullOrWhiteSpace(queryParams.FeaturedItemCategory))
-    {
-        query = query.Where(gs => gs.FeaturedItems.Any(fi => fi.Category.Name == queryParams.FeaturedItemCategory));
-    }
-
-    // Query locates garage sales BEGINNING between AfterDate and BeforeDate.
-    if(queryParams.AfterDate.HasValue || queryParams.BeforeDate.HasValue)
-    {
-        var afterDate = queryParams.AfterDate?.Date;
-        var beforeDate = queryParams.BeforeDate?.Date.AddDays(1).AddTicks(-1); // E.g., 11:59:59 PM on equested BeforeDate
-
-        query = query.Where(gs => gs.GarageSaleSchedules.Any(s =>
-            (!afterDate.HasValue || s.From >= afterDate.Value) &&
-            (!beforeDate.HasValue || s.From <= beforeDate.Value)
-        ));
-    }
-
-    // Is it a good idea to submit the query before this point to reduce the amount of distance calculations,
-    // or is these optimizations already made by default?
-    if(!string.IsNullOrWhiteSpace(queryParams.FromStreet) && !string.IsNullOrWhiteSpace(queryParams.FromZip)
-        && queryParams.RadiusMiles.HasValue)
-    {
-        var address = await db.Addresses.FirstOrDefaultAsync(a =>
-            string.Equals(a.Street, queryParams.FromStreet, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(a.Zip, queryParams.FromZip, StringComparison.OrdinalIgnoreCase));
-
-        Geometry pointOfOrigin = null;
-        if(address is not null && address.Location is not null)
-        {
-            pointOfOrigin = address.Location;
-        }
-        else
-        {
-            var geocoded = await geo.GeocodeAddressAsync(queryParams.FromStreet, queryParams.FromZip);
-            var feature = geocoded?.Features?.FirstOrDefault();
-            if (feature is not null)
-            {
-                var lat = feature.Properties.Lat;
-                var lon = feature.Properties.Lon;
-                pointOfOrigin = new Point(lon, lat) {SRID = 4326}; //SRID = 4326 indicates WGS 84 coordinate reference system (used by Geoapify).
-            }
-        }
-
-        if(pointOfOrigin is not null)
-            query = query.WithinRadiusOf(pointOfOrigin, queryParams.RadiusMiles.Value);
-    }
-
-    var matchingSales = await query
-        .Select(gs => new GarageSaleSummaryDTO(
-            gs.SaleType.Name,
-            gs.Address.Street,
-            gs.Address.Zip,
-            gs.Description,
-            gs.GarageSaleSchedules.Select(s => new GarageSaleScheduleDTO(s.From, s.To)).ToList(),
-            gs.FeaturedItems.Select(fi => new FeaturedItemDTO(fi.Category.Name, fi.Description)).ToList()
-        ))
-        .ToListAsync();
-    
-    return Results.Ok(matchingSales);
-});
-
-app.MapPost("/api/users", async (CreateUserDTO dto, GarageSalesDbContext db, IGeocodingService geo) =>
-{
-    var existingUser = await db.Users.FirstOrDefaultAsync(u => u.UserName == dto.UserName);
-    if(existingUser is not null)
-        return Results.Conflict($"User with user name {dto.UserName} already exists.");
-
-    var address = await db.Addresses.FirstOrDefaultAsync(a =>
-            string.Equals(a.Street, dto.Street, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(a.Zip, dto.Zip, StringComparison.OrdinalIgnoreCase));
-
-    if(address is null)
-    {
-        address = new(){Street=dto.Street, City="Palm Coast", State="FL", Zip=dto.Zip};
-        var geocoded = await geo.GeocodeAddressAsync(dto.Street, dto.Zip);
-        var feature = geocoded?.Features?.FirstOrDefault();
-        if (feature is not null)
-        {
-            var lat = feature.Properties.Lat;
-            var lon = feature.Properties.Lon;
-            address.Lat = lat;
-            address.Lon = lon;
-            address.Location = new Point(lon, lat) {SRID = 4326}; //SRID = 4326 indicates WGS 84 coordinate reference system (used by Geoapify).
-        }
-    }
-
-    var user = new User
-    {
-        UserName = dto.UserName,
-        Email = dto.Email,
-        Password = dto.Password,
-        Address = address,
-        IsAdmin = false
-    };
-
-    db.Users.Add(user);
-    await db.SaveChangesAsync();
-
-    return Results.Created($"/api/users/{user.Id}", new { id = user.Id });
-});
+#endregion
 
 app.Run();

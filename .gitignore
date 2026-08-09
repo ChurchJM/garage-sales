@@ -1,4 +1,4 @@
 **/bin
 **/obj
-/GarageSalesDB/Scripts
-/GarageSalesAPI/HTTP Requests
+/src/GarageSales.Database/Scripts
+/src/GarageSales.API/HTTP Requests

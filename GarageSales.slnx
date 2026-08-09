@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GarageSales.API/GarageSales.API.csproj" />
+    <Project Path="src/GarageSales.Database/GarageSales.Database.sqlproj" Type="42ea0dbd-9cf1-443e-919e-be9c484e4577" />
+    <Project Path="src/GarageSales.Web/GarageSales.Web.csproj" />
+  </Folder>
+</Solution>

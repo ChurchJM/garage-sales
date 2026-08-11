@@ -44,13 +44,11 @@ function modalLogic() {
 
         async fetchCurrentUser(){
             try {
-                console.warn('fetching current user');
                 const response = await fetch('https://localhost:7285/api/auth/me', {
                             credentials: 'include'
                         });
                 if (response.ok) {
                     const data = await response.json();
-                    console.log(data);
                     this.currentUser = data.userName;
                 }
             } catch (err) {
@@ -74,7 +72,6 @@ function modalLogic() {
         },
 
         openCreateModal() {
-            console.warn('opening create modal.');
             this.isEditing = false;
             this.form = {
                 id: 0,
@@ -90,7 +87,6 @@ function modalLogic() {
         },
 
         openEditModal(sale) {
-            console.log(sale);
             this.isEditing = true;
             this.form = {
                 id: sale.id,
@@ -115,9 +111,7 @@ function modalLogic() {
             this.bsModal.show();
         },
 
-        async saveSale() {
-            console.warn('--- SAVE SALE TRIGGERED ---');
-            
+        async saveSale() {            
             if (this.form.schedules.length === 0) {
                 alert('Please add at least one schedule date.');
                 return;
@@ -138,8 +132,6 @@ function modalLogic() {
                     to: s.to ? new Date(s.to).toISOString() : null
                 }))
             };
-
-            console.log('Form Snapshot:', JSON.parse(JSON.stringify(payload)));
 
             try {
                 const response = await fetch(url, {

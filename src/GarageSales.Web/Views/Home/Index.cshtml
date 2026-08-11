@@ -179,8 +179,6 @@
 
                         const queryString = new URLSearchParams(activeParams).toString(); // Space = +, & = %26, etc. Can be handled directly by C# code. 
                         const requestUrl = `https://localhost:7285/api/garagesales?${queryString}`;
-                        
-                        console.log('Sending API Request to:', requestUrl);
 
                         const response = await fetch(requestUrl);
                         if (response.ok) {
@@ -190,7 +188,6 @@
                         console.error('Failed to fetch sales:', err);
                     } finally {
                         this.loading = false;
-                        console.log(this.garageSales);
                     }
                 },
 
@@ -208,9 +205,7 @@
 
                 formattedDate(date){
                     const d = new Date(date);
-                    console.log('parsing date');
-                    console.log(d);
-                    fDate = new Intl.DateTimeFormat('en-US', {
+                    dateString = new Intl.DateTimeFormat('en-US', {
                         month: 'short',
                         day: '2-digit',
                         year: 'numeric',
@@ -218,8 +213,7 @@
                         minute: '2-digit',
                         hour12: true,
                     }).format(d);
-                    console.log(fDate);
-                    return fDate;
+                    return dateString;
                 }
             }
         }

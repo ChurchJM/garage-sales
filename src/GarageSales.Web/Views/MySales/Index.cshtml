@@ -7,8 +7,9 @@
     <!-- Top Action Bar -->
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
-            <h2 class="fw-bold text-dark mb-0">My Garage Sales</h2>
-            <p class="text-muted small mb-0">Manage your active and upcoming listings</p>
+            <h2 class="fw-bold text-dark mb-0">
+                @(User.IsInRole("Admin") ? "All Listings" : "My Listings")
+            </h2>
         </div>
         <button class="btn btn-primary d-flex align-items-center gap-2" x-on:click="openCreateModal()">
             <span class="fs-5">+</span> Create New Sale
@@ -98,7 +99,6 @@
                         });
                         if (response.ok) {
                             this.garageSales = await response.json();
-                            console.log(this.garageSales);
                         }
                     } catch (err) {
                         this.showMessage('Failed to load garage sales', 'danger');

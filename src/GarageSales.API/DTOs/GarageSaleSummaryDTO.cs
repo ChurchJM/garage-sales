@@ -1,11 +1,13 @@
 using System.Text.Json.Serialization;
 
-// This DTO is almost identical to GarageSaleCreateDTO, except that Owner is omitted for privacy.
 public record GarageSaleSummaryDTO(
+    [property: JsonRequired] int Id,
+    string? Owner, // null unless admin is requesting the record.
     [property: JsonRequired] string SaleType,
     [property: JsonRequired] string Street,
     [property: JsonRequired] string Zip,
     string? Description,
+    double? DistanceMiles,
     [property: JsonRequired] List<GarageSaleScheduleDTO> Schedules,
     List<FeaturedItemDTO> FeaturedItems
 );

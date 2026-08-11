@@ -1,4 +1,4 @@
-using GarageSalesAPI.Entities;
+using GarageSales.API.Entities;
 using NetTopologySuite.Geometries;
 
 public static class SpatialQueryExtensions

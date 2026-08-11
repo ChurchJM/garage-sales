@@ -1,14 +1,21 @@
 using System.Net;
 using System.Net.Sockets;
-using GarageSalesAPI.Entities;
+using System.Security.Claims;
+using GarageSales.API.Entities;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using NetTopologySuite.Geometries;
 using Scalar.AspNetCore;
 using Point = NetTopologySuite.Geometries.Point;
 
 var builder = WebApplication.CreateBuilder(args);
+
+string? connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<GarageSalesDbContext>(options =>
 {
+    options.UseSqlServer(connectionString);
     // options.EnableSensitiveDataLogging();
     // options.EnableDetailedErrors();
 });
@@ -38,6 +45,31 @@ builder.Services.AddHttpClient<IGeocodingService, GeoapifyGeocodingService>(clie
 
 builder.Services.AddScoped<IEmailNotificationService, MailpitEmailNotificationService>();
 
+var keysFolder = Path.Combine(builder.Environment.ContentRootPath, "..", "shared-keys");
+
+Console.WriteLine($"[DataProtection API] Using Key Store Path: {keysFolder}");
+
+// Necessary for web project to decrypt cookie created by API login.
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(keysFolder))
+    .SetApplicationName("GarageSalesApp");
+
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.Cookie.Name = "GarageSaleAuth";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Events.OnRedirectToLogin = context =>
+        {
+            // Return 401 Unauthorized for API requests instead of redirecting to a login page
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return Task.CompletedTask;
+        };
+    });
+
+builder.Services.AddAuthorization();
+
 // Allow GarageSales.Web project to make JavaScript calls to API.
 builder.Services.AddCors(options =>
 {
@@ -46,14 +78,16 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(
             "https://localhost:7120",
             "http://localhost:5042"
-        ).AllowAnyHeader().AllowAnyMethod();
+        ).AllowAnyHeader().AllowAnyMethod().AllowCredentials();;
     });
 });
-
 
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 // Available at http://localhost:5166/scalar/v1
 if (app.Environment.IsDevelopment())
@@ -64,6 +98,8 @@ if (app.Environment.IsDevelopment())
         options.WithTitle("Garage Sales API");
     }); 
 }
+
+app.UseCors("AllowWebFrontend");
 
 app.UseHttpsRedirection();
 
@@ -81,7 +117,20 @@ app.MapGet("/api/garagesales", async ([AsParameters] GarageSaleQueryParamsDTO qu
         && gs.Description.Contains(queryParams.Keyword));
     }
 
-    if(!string.IsNullOrWhiteSpace(queryParams.FeaturedItemCategory))
+    if(queryParams.SaleTypeId.HasValue)
+    {
+        query = query.Where(gs => gs.SaleTypeId == queryParams.SaleTypeId.Value);
+    }
+    else if(!string.IsNullOrWhiteSpace(queryParams.GarageSaleType))
+    {
+        query = query.Where(gs => gs.SaleType.Name == queryParams.GarageSaleType);
+    }
+
+    if(queryParams.ItemCategoryId.HasValue)
+    {
+        query = query.Where(gs => gs.FeaturedItems.Any(fi => fi.CategoryId == queryParams.ItemCategoryId.Value));
+    }
+    else if(!string.IsNullOrWhiteSpace(queryParams.FeaturedItemCategory))
     {
         query = query.Where(gs => gs.FeaturedItems.Any(fi => fi.Category.Name == queryParams.FeaturedItemCategory));
     }
@@ -90,7 +139,7 @@ app.MapGet("/api/garagesales", async ([AsParameters] GarageSaleQueryParamsDTO qu
     if(queryParams.AfterDate.HasValue || queryParams.BeforeDate.HasValue)
     {
         var afterDate = queryParams.AfterDate?.Date;
-        var beforeDate = queryParams.BeforeDate?.Date.AddDays(1).AddTicks(-1); // E.g., 11:59:59 PM on equested BeforeDate
+        var beforeDate = queryParams.BeforeDate?.Date.AddDays(1).AddTicks(-1); // E.g., 11:59:59 PM on requested BeforeDate
 
         query = query.Where(gs => gs.GarageSaleSchedules.Any(s =>
             (!afterDate.HasValue || s.From >= afterDate.Value) &&
@@ -98,6 +147,7 @@ app.MapGet("/api/garagesales", async ([AsParameters] GarageSaleQueryParamsDTO qu
         ));
     }
 
+    Geometry pointOfOrigin = null;
     if(!string.IsNullOrWhiteSpace(queryParams.FromStreet) && !string.IsNullOrWhiteSpace(queryParams.FromZip)
         && queryParams.RadiusMiles.HasValue)
     {
@@ -105,7 +155,6 @@ app.MapGet("/api/garagesales", async ([AsParameters] GarageSaleQueryParamsDTO qu
             a.Street.ToUpper() == queryParams.FromStreet.ToUpper()
             && a.Zip == queryParams.FromZip);
 
-        Geometry pointOfOrigin = null;
         if(address is not null && address.Location is not null)
         {
             pointOfOrigin = address.Location;
@@ -128,12 +177,15 @@ app.MapGet("/api/garagesales", async ([AsParameters] GarageSaleQueryParamsDTO qu
 
     var matchingSales = await query
         .Select(gs => new GarageSaleSummaryDTO(
+            gs.Id,
+            null,
             gs.SaleType.Name,
             gs.Address.Street,
             gs.Address.Zip,
             gs.Description,
+            pointOfOrigin != null ? Math.Round(gs.Address.Location.Distance(pointOfOrigin) / SpatialQueryExtensions.MetersPerMile, 2) : null,
             gs.GarageSaleSchedules.Select(s => new GarageSaleScheduleDTO(s.From, s.To)).ToList(),
-            gs.FeaturedItems.Select(fi => new FeaturedItemDTO(fi.Category.Name, fi.Description)).ToList()
+            gs.FeaturedItems.Select(fi => new FeaturedItemDTO(fi.Category.Name, fi.Name, fi.Description, fi.Price)).ToList()
         ))
         .ToListAsync();
     
@@ -148,19 +200,86 @@ app.MapGet("/api/garagesales/{id:int}", async (int id, GarageSalesDbContext db) 
 
     var scheduleDTOs = existingSale.GarageSaleSchedules.Select(s => new GarageSaleScheduleDTO(s.From, s.To)).ToList();
 
-    var itemDTOs = existingSale.FeaturedItems.Select(fi => new FeaturedItemDTO(fi.Category.Name, fi.Description)).ToList();
+    var itemDTOs = existingSale.FeaturedItems.Select(fi => new FeaturedItemDTO(fi.Category.Name, fi.Name, fi.Description, fi.Price)).ToList();
 
     var summaryDTO = new GarageSaleSummaryDTO
     (
+        existingSale.Id,
+        null,
         existingSale.SaleType.Name,
         existingSale.Address.Street,
         existingSale.Address.Zip,
         existingSale.Description,
+        null,
         scheduleDTOs,
         itemDTOs
     );
 
     return Results.Ok(summaryDTO);
+});
+
+app.MapGet("/api/lookups", async(GarageSalesDbContext db) =>
+{
+    var saleTypes = await db.GarageSaleTypes.Select(gst => new GarageSaleTypeDTO
+    (
+       gst.Id, gst.Name, gst.Description 
+    )).ToListAsync();
+
+    var itemCategories = await db.ItemCategories.Select(ic => new ItemCategoryDTO
+    (
+        ic.Id, ic.Name, ic.Description
+    )).ToListAsync();
+
+    var lookups = new LookupsDTO(saleTypes, itemCategories);
+
+    return Results.Ok(lookups);
+});
+
+app.MapGet("/api/auth/me", (ClaimsPrincipal user) =>
+{
+    if(user.Identity?.IsAuthenticated != true)
+    {
+        return Results.Unauthorized();
+    }
+
+    return Results.Ok(new
+    {
+        Id = user.FindFirstValue(ClaimTypes.NameIdentifier),
+        Email = user.FindFirstValue(ClaimTypes.Email),
+        UserName = user.FindFirstValue(ClaimTypes.Name),
+        IsAdmin = user.IsInRole("Admin") 
+    });
+});
+
+app.MapGet("/api/mygaragesales", async (ClaimsPrincipal user, GarageSalesDbContext db) =>
+{
+    var userIdString = user.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (!int.TryParse(userIdString, out int currentUserId))
+    {
+        return Results.Unauthorized();
+    }
+
+    List<GarageSaleSummaryDTO> results = null;
+    var query = db.GarageSales.AsNoTracking();
+    if(!user.IsInRole("Admin"))
+    {
+        query = query.Where(gs => gs.OwnerId == currentUserId);
+    }
+    
+    results = await query.Select(gs => new GarageSaleSummaryDTO(
+        gs.Id,
+        gs.Owner.UserName,
+        gs.SaleType.Name,
+        gs.Address.Street,
+        gs.Address.Zip,
+        gs.Description,
+        null,
+        gs.GarageSaleSchedules.Select(s => new GarageSaleScheduleDTO(s.From, s.To)).ToList(),
+        gs.FeaturedItems.Select(fi => new FeaturedItemDTO(fi.Category.Name, fi.Name, fi.Description, fi.Price)).ToList()
+    ))
+    .ToListAsync();
+    
+    return Results.Ok(results);
 });
 
 #endregion
@@ -239,7 +358,9 @@ app.MapPost("/api/garagesales", async (GarageSaleCreateDTO dto, GarageSalesDbCon
         FeaturedItems = dto.FeaturedItems?.Select(fi => new FeaturedItem
         {
             CategoryId = categories.GetValueOrDefault(fi.Category),
-            Description = fi.Description
+            Name = fi.Name,
+            Description = fi.Description,
+            Price = fi.Price
         }).ToList() ?? new List<FeaturedItem>()
     };
     
@@ -279,15 +400,21 @@ app.MapPost("/api/garagesales/{id:int}/confirm", async (int id, GarageSalesDbCon
             SaleDistance = n.User.Address.Location.Distance(saleLocation) / SpatialQueryExtensions.MetersPerMile
         }).Distinct().ToListAsync();
 
-    // Todo: Check if Mailpit is running or add try/catch here.
-    foreach(var notification in notifications)
+    try
     {
-        await emailSvc.SendGarageSaleNotificationAsync(
-            notification.Email,
-            notification.UserName,
-            saleAddress,
-            notification.SaleDistance,
-            saleDate);
+        foreach(var notification in notifications)
+        {
+            await emailSvc.SendGarageSaleNotificationAsync(
+                notification.Email,
+                notification.UserName,
+                saleAddress,
+                notification.SaleDistance,
+                saleDate);
+        }
+    }
+    catch(Exception ex)
+    {
+        Console.WriteLine("Please ensure Mailpit is running.");
     }
 
     return Results.Ok();
@@ -333,17 +460,68 @@ app.MapPost("/api/users", async (CreateUserDTO dto, GarageSalesDbContext db, IGe
     return Results.Created($"/api/users/{user.Id}", new { id = user.Id });
 });
 
+app.MapPost("/api/auth/login", async (LoginDTO dto, GarageSalesDbContext db, HttpContext httpContext) =>
+{
+    var user = await db.Users.FirstOrDefaultAsync(u => u.UserName == dto.UserName);
+    if(user is null || user.Password != dto.Password)
+    {
+        return Results.Unauthorized();
+    }
+
+    var claims = new List<Claim>()
+    {
+        new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+        new Claim(ClaimTypes.Name, user.UserName),
+        new Claim(ClaimTypes.Email, user.Email)
+    };
+
+    if(user.IsAdmin)
+    {
+        claims.Add(new Claim(ClaimTypes.Role, "Admin"));
+    }
+
+    var claimsIdentity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+    var claimsPrincipal = new ClaimsPrincipal(claimsIdentity);
+
+    await httpContext.SignInAsync(
+        CookieAuthenticationDefaults.AuthenticationScheme,
+        claimsPrincipal,
+        new AuthenticationProperties { IsPersistent = true, ExpiresUtc = DateTimeOffset.UtcNow.AddDays(1)}
+    );
+
+    return Results.Ok(new {user.Id, user.UserName, user.Email, user.IsAdmin});
+});
+
+app.MapPost("/api/auth/logout", async (HttpContext httpContext) =>
+{
+    await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    return Results.Ok();
+});
+
 #endregion
 
 #region PUT Mappings
 
 // Update Garage Sale
-app.MapPut("/api/garagesales/{id:int}", async (int id, GarageSaleUpdateDTO dto, GarageSalesDbContext db, IGeocodingService geo) =>
+app.MapPut("/api/garagesales/{id:int}", async (int id, GarageSaleUpdateDTO dto, GarageSalesDbContext db, 
+IGeocodingService geo, ClaimsPrincipal user) =>
 {
+    var userIdString = user.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (!int.TryParse(userIdString, out int currentUserId))
+    {
+        return Results.Unauthorized();
+    }
+
     var existingSale = await db.GarageSales.FirstOrDefaultAsync(gs => gs.Id == id);
     if(existingSale is null)
         return Results.NotFound($"Garage sale with id {id} not found.");
     
+    // Users may only edit their own sales, but admins can edit everything.
+    if(existingSale.OwnerId != currentUserId && !user.IsInRole("Admin"))
+    {
+        return Results.Forbid();
+    }
+
     // No need to check number of user's sales in edit endpoint.
 
     // Ensure all schedules fall within two consecutive days.
@@ -412,7 +590,9 @@ app.MapPut("/api/garagesales/{id:int}", async (int id, GarageSaleUpdateDTO dto, 
             existingSale.FeaturedItems.Add(new FeaturedItem
             {
                 CategoryId = categories.GetValueOrDefault(fi.Category),
-                Description = fi.Description
+                Name = fi.Name,
+                Description = fi.Description,
+                Price = fi.Price
             });
         }
     }
@@ -426,11 +606,23 @@ app.MapPut("/api/garagesales/{id:int}", async (int id, GarageSaleUpdateDTO dto, 
 
 #region DELETE Mappings
 
-app.MapDelete("/api/garagesales/{id:int}", async (int id, GarageSalesDbContext db) =>
+app.MapDelete("/api/garagesales/{id:int}", async (int id, GarageSalesDbContext db, ClaimsPrincipal user) =>
 {
+    var userIdString = user.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (!int.TryParse(userIdString, out int currentUserId))
+    {
+        return Results.Unauthorized();
+    }
+
     var existingSale = await db.GarageSales.FirstOrDefaultAsync(gs => gs.Id == id);
     if(existingSale is null)
         return Results.NotFound($"Garage sale with id {id} not found.");
+    
+    // Users may only edit their own sales, but admins can edit everything.
+    if(existingSale.OwnerId != currentUserId && !user.IsInRole("Admin"))
+    {
+        return Results.Forbid();
+    }
     
     db.GarageSales.Remove(existingSale);
     await db.SaveChangesAsync();

@@ -1,5 +1,5 @@
 using System.Web;
-using GarageSalesAPI.Entities;
+using GarageSales.API.Entities;
 using Microsoft.EntityFrameworkCore;
 
 public class GeoapifyGeocodingService : IGeocodingService

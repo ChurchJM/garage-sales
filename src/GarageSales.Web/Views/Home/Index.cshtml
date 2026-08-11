@@ -1,8 +1,227 @@
 ﻿@{
-    ViewData["Title"] = "Home Page";
+    ViewData["Title"] = "Search Sales";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<div class="container" x-data="garageSalesApp()" x-cloak>
+    <h2 class="mb-4 fw-bold text-secondary">Find Garage Sales</h2>
+
+    <!-- Filter Panel -->
+    <form x-on:submit.prevent="fetchSales()" class="card card-body bg-light mb-4 shadow-sm border-0">
+        <div class="row g-3">
+            
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">From Street</label>
+                <input class="form-control" x-model="filters.fromStreet" />
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">From Zip</label>
+                <input class="form-control" x-model="filters.fromZip" min="1" />
+            </div>
+            
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Radius (Miles)</label>
+                <input type="number" class="form-control" x-model.number="filters.radiusMiles" min="1" max="50">
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Sale Type</label>
+                <select class="form-select" x-model="filters.saleTypeId">
+                    <option value="">All Types</option>
+                    <template x-for="type in lookups.garageSaleTypes" :key="type.id">
+                        <option :value="type.id" x-text="type.name"></option>
+                    </template>
+                </select>
+            </div>
+
+            <!-- Category Dropdown -->
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Including Featured Item</label>
+                <select class="form-select" x-model="filters.itemCategoryId">
+                    <option value="">All Categories</option>
+                    <template x-for="cat in lookups.itemCategories" :key="cat.id">
+                        <option :value="cat.id" x-text="cat.name"></option>
+                    </template>
+                </select>
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Keyword</label>
+                <input type="text" class="form-control" x-model.trim="filters.keyword" placeholder="e.g. Tools, Furniture">
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Starting After</label>
+                <input type="date" class="form-control" x-model.trim="filters.afterDate">
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Starting Before</label>
+                <input type="date" class="form-control" x-model.trim="filters.beforeDate">
+            </div>
+
+            <!-- Form Action Buttons -->
+            <div class="col-md-12 d-flex flex-row-reverse align-items-end gap-2">
+                <button type="button" class="btn btn-outline-secondary" x-on:click="resetFilters()">Reset</button>
+                <button type="submit" class="btn btn-primary px-4">Search Sales</button>
+            </div>
+        </div>
+    </form>
+
+    <!-- Results Display -->
+    <div class="row">
+        <!-- Loading Spinner -->
+        <div x-show="loading" class="text-center my-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div x-show="!loading && garageSales.length === 0" class="alert alert-info text-center">
+            No garage sales match your criteria.
+        </div>
+
+        <!-- Sales Card Grid -->
+        <template x-for="sale in garageSales" :key="sale.id">
+             <div class="col-lg-4 mb-4" x-show="!loading">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h5 class="card-title text-primary fw-bold mb-0" x-text="sale.street"></h5>
+                            <span class="badge bg-secondary" x-text="sale.distanceMiles + ' mi'"></span>
+                        </div>
+                        <div>
+                            <h6 class="card-subtitle mb-1" x-text="sale.saleType"></h6>
+                        </div>
+                        <p class="card-text text-muted" x-text="sale.description"></p>
+                        
+                        <div class="mb-3">
+                            <h6 class="card-subtitle mb-1">Schedule</h6>
+                            <hr class="my-2" />
+                            <ul class="list-unstyled ps=0 mb-0">
+                                <template x-for="(schedule, index) in sale.schedules" :key="index">
+                                    <li class="mb-1">
+                                        <span class="badge bg-warning-subtle text-secondary-emphasis me-1" 
+                                            x-text="formattedDate(schedule.from) + ' - ' + formattedDate(schedule.to)"></span>
+                                    </li>
+                                </template>
+                            </ul>
+                        </div>
+                        
+                        <div>
+                            <h6 class="card-subtitle mb-1">Featured Items</h6>
+                            <hr class="my-2" />
+                            <ul class="list-unstyled ps=0 mb-0">
+                                <template x-for="(item, index) in sale.featuredItems" :key="index">
+                                    <li class="mb-0">
+                                        <span class="badge bg-secondary-subtle text-secondary-emphasis me-1" x-text="item.category"></span>
+                                        <span class="badge bg-success" x-text="`$${item.price}`"></span>
+                                        <p class="mb-1" x-text="item.name"></p>
+                                    </li>
+                                </template>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
 </div>
+
+@section Scripts {
+    <script src="~/js/datetime-helpers.js" asp-append-version="true"></script>
+    <script>
+        function garageSalesApp() {
+            return {
+                loading: false,
+                garageSales: [],
+                lookups: {
+                    garageSaleTypes: [],
+                    itemCategories: []
+                },
+                filters: {
+                    keyword: '',
+                    saleTypeId: '',
+                    itemCategoryId: '',
+                    radiusMiles: 10,
+                    fromStreet: '3 Wallis Pl',
+                    fromZip: '32164',
+                    afterDate: '',
+                    beforeDate: ''
+                },
+
+                async init() {
+                    await this.fetchLookups();
+                    await this.fetchSales();
+                },
+
+                async fetchLookups() {
+                    try {
+                        const response = await fetch('https://localhost:7285/api/lookups');
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.lookups.garageSaleTypes = data.garageSaleTypes || [];
+                            this.lookups.itemCategories = data.itemCategories || [];
+                        }
+                    } catch (err) {
+                        console.error('Failed to fetch lookups:', err);
+                    }
+                },
+
+                async fetchSales() {
+                    this.loading = true;
+                    try {                        
+                        // Filter out empty search criteria
+                        const activeParams = Object.fromEntries(
+                            Object.entries(this.filters).filter(([_, v]) => v !== '' && v !== null && v !== undefined)
+                        );
+
+                        const queryString = new URLSearchParams(activeParams).toString(); // Space = +, & = %26, etc. Can be handled directly by C# code. 
+                        const requestUrl = `https://localhost:7285/api/garagesales?${queryString}`;
+                        
+                        console.log('Sending API Request to:', requestUrl);
+
+                        const response = await fetch(requestUrl);
+                        if (response.ok) {
+                            this.garageSales = await response.json();
+                        }
+                    } catch (err) {
+                        console.error('Failed to fetch sales:', err);
+                    } finally {
+                        this.loading = false;
+                        console.log(this.garageSales);
+                    }
+                },
+
+                resetFilters() {
+                    this.filters.keyword = '';
+                    this.filters.saleTypeId = '';
+                    this.filters.itemCategoryId = '';
+                    this.filters.radiusMiles = 10;
+                    this.filters.fromStreet = '3 Wallis Pl';
+                    this.filters.fromZip = '32164';
+                    this.filters.afterDate = '';
+                    this.filters.beforeDate = '';
+                    this.fetchSales();
+                },
+
+                formattedDate(date){
+                    const d = new Date(date);
+                    console.log('parsing date');
+                    console.log(d);
+                    fDate = new Intl.DateTimeFormat('en-US', {
+                        month: 'short',
+                        day: '2-digit',
+                        year: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        hour12: true,
+                    }).format(d);
+                    console.log(fDate);
+                    return fDate;
+                }
+            }
+        }
+    </script>
+}

@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace GarageSalesAPI.Entities;
+namespace GarageSales.API.Entities;
 
 public partial class FeaturedItem
 {
@@ -11,7 +11,11 @@ public partial class FeaturedItem
 
     public int CategoryId { get; set; }
 
-    public string Description { get; set; } = null!;
+    public string Name { get; set; } = null!;
+
+    public string? Description { get; set; }
+
+    public double Price { get; set; }
 
     public virtual ItemCategory Category { get; set; } = null!;
 

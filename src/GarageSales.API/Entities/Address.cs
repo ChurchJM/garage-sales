@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using NetTopologySuite.Geometries;
 
-namespace GarageSalesAPI.Entities;
+namespace GarageSales.API.Entities;
 
 public partial class Address
 {

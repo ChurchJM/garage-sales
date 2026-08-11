@@ -266,35 +266,38 @@ BEGIN TRY
 
     MERGE INTO [dbo].[FeaturedItems] WITH (HOLDLOCK) AS Target
     USING (VALUES 
-        (1,  1,  16, N'Solid Oak 6-Drawer Dresser in excellent condition'),
-        (2,  1,  13, N'Ninja Air Fryer Max XL - barely used'),
-        (3,  2,  10, N'55-inch LG 4K Smart TV with wall mount'),
-        (4,  2,  16, N'Queen size mattress frame and headboard'),
-        (5,  3,  7,  N'LEGO Star Wars Millennium Falcon set (100% complete)'),
-        (6,  3,  3,  N'Gently used toddler outerwear and shoes (sizes 2T-4T)'),
-        (7,  4,  15, N'Handcrafted wooden wall clocks and framed canvas art'),
-        (8,  5,  14, N'Vintage 12-piece porcelain tea set'),
-        (9,  5,  15, N'19th Century antique carved wooden mirror'),
-        (10, 6,  19, N'DeWalt 20V Max Cordless Drill & Impact Driver Combo Set'),
-        (11, 6,  20, N'Honda 21-inch Self-Propelled Gas Lawn Mower'),
-        (12, 7,  5,  N'Handmade beaded necklaces and silver costume jewelry'),
-        (13, 8,  21, N'Callaway Golf Club Set with Stand Bag'),
-        (14, 8,  21, N'Trek FX 2 Hybrid Road Bike - Medium Frame'),
-        (15, 9,  12, N'Full collection of Harry Potter hardcover books'),
-        (16, 10, 9,  N'Nintendo 64 Console with 2 controllers and Super Mario 64'),
-        (17, 10, 11, N'Collection of 1970s Classic Rock vinyl records (30+ LPs)')
-    ) AS Source (Id, GarageSaleId, CategoryId, Description)
+        -- (Id, GarageSaleId, CategoryId, Name, Description, Price)
+        (1,  1,  16, N'Solid Oak 6-Drawer Dresser',             N'Solid oak construction, 6 smooth-gliding drawers, in excellent condition.',                   150.00),
+        (2,  1,  13, N'Ninja Air Fryer Max XL',                 N'Ninja Air Fryer Max XL, barely used, tested and works great.',                                45.00),
+        (3,  2,  10, N'55" LG 4K Smart TV',                     N'55-inch LG 4K Smart TV, includes original remote and heavy-duty wall mount.',                 180.00),
+        (4,  2,  16, N'Queen Mattress Frame & Headboard',       N'Queen size wood frame and upholstered headboard. Sturdy, all hardware included.',             85.00),
+        (5,  3,  7,  N'LEGO Star Wars Millennium Falcon',       N'LEGO Star Wars Millennium Falcon set (75257). 100% complete with manual and minifigs.',       95.00),
+        (6,  3,  3,  N'Toddler Outerwear & Shoes Bundle',       N'Gently used toddler coats, jackets, and shoes in sizes 2T-4T. Clean, smoke-free home.',       15.00),
+        (7,  4,  15, N'Handcrafted Wall Clocks & Canvas Art',   N'Handcrafted wooden wall clocks and matching framed canvas art pieces.',                       35.00),
+        (8,  5,  14, N'Vintage Porcelain Tea Set',              N'Vintage 12-piece porcelain tea set with floral pattern. No chips or cracks.',                 40.00),
+        (9,  5,  15, N'19th Century Carved Wooden Mirror',      N'19th Century antique carved wooden mirror frame with original glass.',                        120.00),
+        (10, 6,  19, N'DeWalt 20V Max Combo Kit',               N'DeWalt 20V Max Cordless Drill & Impact Driver Combo Set with 2 batteries and charger.',       110.00),
+        (11, 6,  20, N'Honda 21" Self-Propelled Mower',         N'Honda 21-inch self-propelled gas lawn mower. Starts on first pull, freshly tuned up.',        160.00),
+        (12, 7,  5,  N'Handmade Beaded & Silver Jewelry',       N'Assortment of handmade beaded necklaces and sterling silver costume jewelry.',                20.00),
+        (13, 8,  21, N'Callaway Golf Club Set',                 N'Complete Callaway golf club set with stand bag, irons, driver, and putter.',                  200.00),
+        (14, 8,  21, N'Trek FX 2 Hybrid Bike',                  N'Trek FX 2 Hybrid Road Bike, medium frame. 24-speed, tuned up and ready to ride.',             175.00),
+        (15, 9,  12, N'Harry Potter Hardcover Collection',      N'Full collection of Harry Potter hardcover books (Books 1-7) in great condition.',             50.00),
+        (16, 10, 9,  N'Nintendo 64 Console Bundle',             N'Nintendo 64 Console with cables, 2 controllers, and Super Mario 64 game cartridge.',          130.00),
+        (17, 10, 11, N'Classic Rock Vinyl Record Lot',          N'Collection of 1970s Classic Rock vinyl records (30+ LPs) including Led Zeppelin and Queen.',  75.00)
+    ) AS Source (Id, GarageSaleId, CategoryId, Name, Description, Price)
     ON (Target.Id = Source.Id)
 
     WHEN MATCHED THEN
         UPDATE SET 
             Target.GarageSaleId = Source.GarageSaleId,
             Target.CategoryId = Source.CategoryId,
-            Target.Description = Source.Description
+            Target.Name = Source.Name,
+            Target.Description = Source.Description,
+            Target.Price = Source.Price
 
     WHEN NOT MATCHED THEN
-        INSERT (Id, GarageSaleId, CategoryId, Description)
-        VALUES (Source.Id, Source.GarageSaleId, Source.CategoryId, Source.Description);
+        INSERT (Id, GarageSaleId, CategoryId, Name, Description, Price)
+        VALUES (Source.Id, Source.GarageSaleId, Source.CategoryId, Source.Name, Source.Description, Source.Price);
 
     SET IDENTITY_INSERT [dbo].[FeaturedItems] OFF;
 
@@ -370,6 +373,10 @@ BEGIN CATCH
     SET IDENTITY_INSERT [dbo].[GarageSaleTypes] OFF;
     SET IDENTITY_INSERT [dbo].[Addresses] OFF;
     SET IDENTITY_INSERT [dbo].[Users] OFF;
+    SET IDENTITY_INSERT [dbo].[Notifications] OFF;
+    SET IDENTITY_INSERT [dbo].[GarageSales] OFF;
+    SET IDENTITY_INSERT [dbo].[FeaturedItems] OFF;
+    SET IDENTITY_INSERT [dbo].[GarageSaleschedules] OFF;
 
     -- Roll back all operations if any statement fails
     IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;

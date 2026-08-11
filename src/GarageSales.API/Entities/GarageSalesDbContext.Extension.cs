@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Org.BouncyCastle.Crypto.Modes;
 
-namespace GarageSalesAPI.Entities;
+namespace GarageSales.API.Entities;
 
 public partial class GarageSalesDbContext : DbContext
 {

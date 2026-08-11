@@ -6,6 +6,9 @@ public record GarageSaleQueryParamsDTO(
     [property: FromQuery] string? FromStreet = null,
     [property: FromQuery] string? FromZip = null,
     [property: FromQuery] double? RadiusMiles = null,
+    [property: FromQuery] int? SaleTypeId = null,
+    [property: FromQuery] string? GarageSaleType = null,
+    [property: FromQuery] int? ItemCategoryId = null,
     [property: FromQuery] string? FeaturedItemCategory = null,
     [property: FromQuery] string? Keyword = null
 );

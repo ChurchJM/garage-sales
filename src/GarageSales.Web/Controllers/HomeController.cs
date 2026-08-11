@@ -6,10 +6,24 @@ namespace GarageSales.Web.Controllers;
 
 public class HomeController : Controller
 {
-    public IActionResult Index()
+    private readonly IHttpClientFactory _httpClientFactory;
+
+    public HomeController(IHttpClientFactory httpClientFactory)
     {
+        _httpClientFactory = httpClientFactory;
+    }
+
+    public async Task<IActionResult> Index()
+    {
+        // var client = _httpClientFactory.CreateClient("GarageSalesAPI");
+        // var sales = await client.GetFromJsonAsync<GarageSaleSummaryDTO>("/api/garagesales/3");
         return View();
     }
+
+    // public IActionResult Index()
+    // {
+    //     return View();
+    // }
 
     public IActionResult Privacy()
     {

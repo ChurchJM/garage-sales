@@ -4,7 +4,7 @@
  */
 function toLocalDatetimeString(dateInput) {
     if (!dateInput) return '';
-    const d = new Date(dateInput);
+    const d = new Date(dateInput+'Z');
     if (isNaN(d.getTime())) return ''; // Return empty string if date is invalid
 
     const year = d.getFullYear();

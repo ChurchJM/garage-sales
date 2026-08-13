@@ -103,7 +103,7 @@
                                 <template x-for="(schedule, index) in sale.schedules" :key="index">
                                     <li class="mb-1">
                                         <span class="badge bg-warning-subtle text-secondary-emphasis me-1" 
-                                            x-text="formattedDate(schedule.from) + ' - ' + formattedDate(schedule.to)"></span>
+                                            x-text="formattedSchedule(schedule)"></span>
                                     </li>
                                 </template>
                             </ul>
@@ -183,6 +183,15 @@
                         const response = await fetch(requestUrl);
                         if (response.ok) {
                             this.garageSales = await response.json();
+                            
+                            // Convert sale schedules to local time zone.
+                            this.garageSales = this.garageSales.map(sale => ({
+                              ...sale,
+                              schedules: sale.schedules.map(schedule => ({
+                                from: new Date(schedule.from+'Z').toLocaleString(),
+                                to: new Date(schedule.to+'Z').toLocaleString()
+                              }))
+                            }));
                         }
                     } catch (err) {
                         console.error('Failed to fetch sales:', err);
@@ -203,17 +212,25 @@
                     this.fetchSales();
                 },
 
-                formattedDate(date){
-                    const d = new Date(date);
-                    dateString = new Intl.DateTimeFormat('en-US', {
+                formattedSchedule(schedule){
+                    const fromDate = new Date(schedule.from);
+                    formattedFrom = new Intl.DateTimeFormat('en-US', {
                         month: 'short',
                         day: '2-digit',
                         year: 'numeric',
                         hour: 'numeric',
                         minute: '2-digit',
                         hour12: true,
-                    }).format(d);
-                    return dateString;
+                    }).format(fromDate);
+
+                    const toDate = new Date(schedule.to);
+                    formattedTo = new Intl.DateTimeFormat('en-US', {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        hour12: true,
+                    }).format(toDate);
+
+                    return `${formattedFrom} - ${formattedTo}`;
                 }
             }
         }

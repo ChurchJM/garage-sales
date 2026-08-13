@@ -1,5 +1,8 @@
 public static class ValidationExtensions
 {
+    // .NET EST time zone automatically handles EST vs EDT
+    private static TimeZoneInfo EST = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+    
     // All GarageSaleSchedules associated with a GarageSale must be within 2 consecutive days.
     public static (bool IsValid, string ErrorMessage) ValidateScheduleSpan(
         this IEnumerable<GarageSaleScheduleDTO>? schedules)
@@ -9,11 +12,14 @@ public static class ValidationExtensions
             return (false, "At least one scheduled date is required.");
         }
 
-        var earliestFrom = schedules.Min(s => s.From);
-        var latestTo = schedules.Max(s => s.To);
+        var earliestFromUtc = schedules.Min(s => s.From);
+        var latestToUtc = schedules.Max(s => s.To);
 
-        var saleStart = DateOnly.FromDateTime(earliestFrom);
-        var saleEnd = DateOnly.FromDateTime(latestTo);
+        var earliestFromEST = TimeZoneInfo.ConvertTimeFromUtc(earliestFromUtc, EST);
+        var latestToEST = TimeZoneInfo.ConvertTimeFromUtc(latestToUtc, EST);
+
+        var saleStart = DateOnly.FromDateTime(earliestFromEST);
+        var saleEnd = DateOnly.FromDateTime(latestToEST);
 
         if (saleEnd.DayNumber - saleStart.DayNumber > 1)
         {
